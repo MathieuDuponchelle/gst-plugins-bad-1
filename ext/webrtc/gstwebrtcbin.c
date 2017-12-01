@@ -33,6 +33,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Useful for testing, do not commit as TRUE ! */
+#define SIMULATE_NETWORK_ISSUES FALSE
+
 #define RANDOM_SESSION_ID \
     ((((((guint64) g_random_int()) << 32) | \
        (guint64) g_random_int ())) & \
@@ -1876,9 +1879,25 @@ _connect_input_stream (GstWebRTCBin * webrtc, GstWebRTCBinPad * pad)
   }
 
   pad_name = g_strdup_printf ("send_rtp_src_%u", pad->mlineindex);
-  if (!gst_element_link_pads (GST_ELEMENT (webrtc->rtpbin), pad_name,
-          GST_ELEMENT (trans->stream->send_bin), "rtp_sink"))
-    g_warn_if_reached ();
+  if (SIMULATE_NETWORK_ISSUES) {
+    GstElement *netsim = gst_element_factory_make ("netsim", NULL);
+
+    gst_bin_add (GST_BIN (webrtc), netsim);
+    if (!gst_element_link_pads (GST_ELEMENT (webrtc->rtpbin), pad_name,
+            netsim, "sink"))
+      g_warn_if_reached ();
+    if (!gst_element_link_pads (netsim, "src",
+            GST_ELEMENT (trans->stream->send_bin), "rtp_sink"))
+      g_warn_if_reached ();
+
+    g_object_set (netsim, "drop-probability", 0.01, NULL);
+
+    gst_element_sync_state_with_parent (netsim);
+  } else {
+    if (!gst_element_link_pads (GST_ELEMENT (webrtc->rtpbin), pad_name,
+            GST_ELEMENT (trans->stream->send_bin), "rtp_sink"))
+      g_warn_if_reached ();
+  }
   g_free (pad_name);
 
   gst_element_sync_state_with_parent (GST_ELEMENT (trans->stream->send_bin));
@@ -1920,10 +1939,29 @@ _connect_output_stream (GstWebRTCBin * webrtc, GstWebRTCBinPad * pad)
   }
 
   pad_name = g_strdup_printf ("recv_rtp_sink_%u", pad->mlineindex);
-  if (!gst_element_link_pads (GST_ELEMENT (trans->stream->receive_bin),
-          "rtp_src", GST_ELEMENT (webrtc->rtpbin), pad_name))
-    g_warn_if_reached ();
-  g_free (pad_name);
+  if (SIMULATE_NETWORK_ISSUES) {
+    GstElement *netsim = gst_element_factory_make ("netsim", NULL);
+
+    gst_bin_add (GST_BIN (webrtc), netsim);
+
+    if (!gst_element_link_pads (GST_ELEMENT (trans->stream->receive_bin),
+            "rtp_src", netsim, "sink"))
+      g_warn_if_reached ();
+
+    if (!gst_element_link_pads (netsim, "src",
+            GST_ELEMENT (webrtc->rtpbin), pad_name))
+      g_warn_if_reached ();
+
+    g_object_set (netsim, "drop-probability", 0.01, NULL);
+
+    gst_element_sync_state_with_parent (netsim);
+  } else {
+    if (!gst_element_link_pads (GST_ELEMENT (trans->stream->receive_bin),
+            "rtp_src", GST_ELEMENT (webrtc->rtpbin), pad_name))
+      g_warn_if_reached ();
+
+    g_free (pad_name);
+  }
 
   gst_element_sync_state_with_parent (GST_ELEMENT (trans->stream->receive_bin));
 
