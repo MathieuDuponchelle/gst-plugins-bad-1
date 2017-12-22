@@ -1394,6 +1394,15 @@ sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
   if (trans->sender) {
     gchar *cert, *fingerprint, *val;
 
+    if (!trans->sender->transport) {
+      TransportStream *item;
+      /* FIXME: bundle */
+      item = _find_transport_for_session (webrtc, media_idx);
+      if (!item)
+        item = _create_transport_channel (webrtc, media_idx);
+      webrtc_transceiver_set_transport (WEBRTC_TRANSCEIVER (trans), item);
+    }
+
     g_object_get (trans->sender->transport, "certificate", &cert, NULL);
 
     fingerprint =
