@@ -1499,6 +1499,32 @@ done:
   return ret;
 }
 
+static void
+_media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
+    GstWebRTCRTPTransceiver * trans)
+{
+  guint i;
+
+  for (i = 0; i < gst_caps_get_size (caps); i++) {
+    const GstStructure *s = gst_caps_get_structure (caps, i);
+    guint ssrc;
+
+    if (gst_structure_get_uint (s, "ssrc", &ssrc)) {
+      gchar *str;
+
+      str =
+          g_strdup_printf ("%u msid:%s %s", ssrc, GST_OBJECT_NAME (webrtc),
+          GST_OBJECT_NAME (trans));
+      gst_sdp_media_add_attribute (media, "ssrc", str);
+      g_free (str);
+
+      str = g_strdup_printf ("%u cname:%s", ssrc, GST_OBJECT_NAME (webrtc));
+      gst_sdp_media_add_attribute (media, "ssrc", str);
+      g_free (str);
+    }
+  }
+}
+
 /* based off https://tools.ietf.org/html/draft-ietf-rtcweb-jsep-18#section-5.2.1 */
 static gboolean
 sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
@@ -1578,6 +1604,7 @@ sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
     _pick_fec_payload_types (webrtc, trans, caps, media);
   }
 
+  _media_add_ssrcs (media, caps, webrtc, trans);
 
   /* Some identifier; we also add the media name to it so it's identifiable */
   sdp_mid = g_strdup_printf ("%s%u", gst_sdp_media_get_media (media),
@@ -1621,6 +1648,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
 {
   GstSDPMessage *ret;
   int i;
+  gchar *str;
 
   gst_sdp_message_new (&ret);
 
@@ -1634,6 +1662,11 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
   gst_sdp_message_set_session_name (ret, "-");
   gst_sdp_message_add_time (ret, "0", "0", NULL);
   gst_sdp_message_add_attribute (ret, "ice-options", "trickle");
+
+  /* https://tools.ietf.org/html/draft-ietf-mmusic-msid-05#section-3 */
+  str = g_strdup_printf ("WMS %s", GST_OBJECT (webrtc)->name);
+  gst_sdp_message_add_attribute (ret, "msid-semantic", str);
+  g_free (str);
 
   /* for each rtp transceiver */
   for (i = 0; i < webrtc->priv->transceivers->len; i++) {
@@ -1878,10 +1911,12 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     }
 
     gst_sdp_media_set_media_from_caps (answer_caps, media);
-    gst_caps_unref (answer_caps);
-    answer_caps = NULL;
 
     _media_add_fec (media, trans, offer_caps);
+    _media_add_ssrcs (media, answer_caps, webrtc, rtp_trans);
+
+    gst_caps_unref (answer_caps);
+    answer_caps = NULL;
 
     /* set the new media direction */
     offer_dir = _get_direction_from_media (offer_media);
