@@ -155,7 +155,7 @@ _transport_stream_get_caps_for_pt (TransportStream * stream, guint pt)
 }
 
 static gint
-_transport_stream_get_pt (TransportStream * stream, gchar * encoding_name)
+_transport_stream_get_pt (TransportStream * stream, const gchar * encoding_name)
 {
   guint i;
   gint ret = 0;
@@ -1442,32 +1442,16 @@ _pick_available_pt (GArray * reserved_pts, guint * i)
 }
 
 static gboolean
-_pick_fec_payload_types (GstWebRTCBin * webrtc, GstWebRTCRTPTransceiver * trans,
-    GstCaps * caps, GstSDPMedia * media)
+_pick_fec_payload_types (GstWebRTCBin * webrtc, WebRTCTransceiver * trans,
+    GArray * reserved_pts, gint clockrate, gint * rtx_target_pt,
+    GstSDPMedia * media)
 {
-  guint i;
-  GArray *reserved_pts = NULL;
   gboolean ret = TRUE;
-  gint clockrate = -1;
 
-  if (WEBRTC_TRANSCEIVER (trans)->fec_type == GST_WEBRTC_FEC_TYPE_NONE)
+  if (trans->fec_type == GST_WEBRTC_FEC_TYPE_NONE)
     goto done;
 
-  reserved_pts = g_array_new (FALSE, FALSE, sizeof (guint));
-
-  for (i = 0; i < gst_caps_get_size (caps); i++) {
-    const GstStructure *s = gst_caps_get_structure (caps, i);
-    gint pt;
-
-    if (gst_structure_get_int (s, "payload", &pt))
-      g_array_append_val (reserved_pts, pt);
-
-    if (clockrate == -1)
-      gst_structure_get_int (s, "clock-rate", &clockrate);
-  }
-
-  if (WEBRTC_TRANSCEIVER (trans)->fec_type == GST_WEBRTC_FEC_TYPE_ULP_RED &&
-      clockrate != -1) {
+  if (trans->fec_type == GST_WEBRTC_FEC_TYPE_ULP_RED && clockrate != -1) {
     guint pt;
     gchar *str;
 
@@ -1481,6 +1465,8 @@ _pick_fec_payload_types (GstWebRTCBin * webrtc, GstWebRTCRTPTransceiver * trans,
     gst_sdp_media_add_attribute (media, "rtpmap", str);
     g_free (str);
 
+    *rtx_target_pt = pt;
+
     if (!(ret = _pick_available_pt (reserved_pts, &pt)))
       goto done;
 
@@ -1493,17 +1479,102 @@ _pick_fec_payload_types (GstWebRTCBin * webrtc, GstWebRTCRTPTransceiver * trans,
   }
 
 done:
-  if (reserved_pts)
-    g_array_free (reserved_pts, TRUE);
-
   return ret;
+}
+
+static gboolean
+_pick_rtx_payload_types (GstWebRTCBin * webrtc, WebRTCTransceiver * trans,
+    GArray * reserved_pts, gint clockrate, gint target_pt, guint target_ssrc,
+    GstSDPMedia * media)
+{
+  gboolean ret = TRUE;
+
+  if (trans->local_rtx_ssrc_map)
+    gst_structure_free (trans->local_rtx_ssrc_map);
+
+  trans->local_rtx_ssrc_map =
+      gst_structure_new_empty ("application/x-rtp-ssrc-map");
+
+  if (trans->do_nack) {
+    guint pt;
+    gchar *str;
+
+    if (!(ret = _pick_available_pt (reserved_pts, &pt)))
+      goto done;
+
+    str = g_strdup_printf ("%u", target_ssrc);
+    gst_structure_set (trans->local_rtx_ssrc_map, str, G_TYPE_UINT,
+        g_random_int (), NULL);
+
+    str = g_strdup_printf ("%u", pt);
+    gst_sdp_media_add_format (media, str);
+    g_free (str);
+
+    str = g_strdup_printf ("%u rtx/%d", pt, clockrate);
+    gst_sdp_media_add_attribute (media, "rtpmap", str);
+    g_free (str);
+
+    str = g_strdup_printf ("%u apt=%d", pt, target_pt);
+    gst_sdp_media_add_attribute (media, "fmtp", str);
+    g_free (str);
+  }
+
+done:
+  return ret;
+}
+
+static gboolean
+_media_add_rtx_ssrc_group (GQuark field_id, const GValue * value,
+    GstSDPMedia * media)
+{
+  gchar *str;
+
+  str =
+      g_strdup_printf ("FID %s %u", g_quark_to_string (field_id),
+      g_value_get_uint (value));
+  gst_sdp_media_add_attribute (media, "ssrc-group", str);
+
+  g_free (str);
+
+  return TRUE;
+}
+
+typedef struct
+{
+  GstSDPMedia *media;
+  GstWebRTCBin *webrtc;
+  WebRTCTransceiver *trans;
+} RtxSsrcData;
+
+static gboolean
+_media_add_rtx_ssrc (GQuark field_id, const GValue * value, RtxSsrcData * data)
+{
+  gchar *str;
+
+  str =
+      g_strdup_printf ("%u msid:%s %s", g_value_get_uint (value),
+      GST_OBJECT_NAME (data->webrtc), GST_OBJECT_NAME (data->trans));
+  gst_sdp_media_add_attribute (data->media, "ssrc", str);
+  g_free (str);
+
+  str =
+      g_strdup_printf ("%u cname:%s", g_value_get_uint (value),
+      GST_OBJECT_NAME (data->webrtc));
+  gst_sdp_media_add_attribute (data->media, "ssrc", str);
+  g_free (str);
+
+  return TRUE;
 }
 
 static void
 _media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
-    GstWebRTCRTPTransceiver * trans)
+    WebRTCTransceiver * trans)
 {
   guint i;
+  RtxSsrcData data = { media, webrtc, trans };
+
+  gst_structure_foreach (trans->local_rtx_ssrc_map,
+      (GstStructureForeachFunc) _media_add_rtx_ssrc_group, media);
 
   for (i = 0; i < gst_caps_get_size (caps); i++) {
     const GstStructure *s = gst_caps_get_structure (caps, i);
@@ -1523,6 +1594,9 @@ _media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
       g_free (str);
     }
   }
+
+  gst_structure_foreach (trans->local_rtx_ssrc_map,
+      (GstStructureForeachFunc) _media_add_rtx_ssrc, &data);
 }
 
 /* based off https://tools.ietf.org/html/draft-ietf-rtcweb-jsep-18#section-5.2.1 */
@@ -1601,10 +1675,32 @@ sdp_media_from_transceiver (GstWebRTCBin * webrtc, GstSDPMedia * media,
   }
 
   if (type == GST_WEBRTC_SDP_TYPE_OFFER) {
-    _pick_fec_payload_types (webrtc, trans, caps, media);
+    GArray *reserved_pts = g_array_new (FALSE, FALSE, sizeof (guint));
+    const GstStructure *s = gst_caps_get_structure (caps, 0);
+    gint clockrate = -1;
+    gint rtx_target_pt;
+    gint original_rtx_target_pt;        /* Workaround chrome bug: https://bugs.chromium.org/p/webrtc/issues/detail?id=6196 */
+    guint rtx_target_ssrc;
+
+    if (gst_structure_get_int (s, "payload", &rtx_target_pt))
+      g_array_append_val (reserved_pts, rtx_target_pt);
+
+    original_rtx_target_pt = rtx_target_pt;
+
+    gst_structure_get_int (s, "clock-rate", &clockrate);
+    gst_structure_get_uint (s, "ssrc", &rtx_target_ssrc);
+
+    _pick_fec_payload_types (webrtc, WEBRTC_TRANSCEIVER (trans), reserved_pts,
+        clockrate, &rtx_target_pt, media);
+    _pick_rtx_payload_types (webrtc, WEBRTC_TRANSCEIVER (trans), reserved_pts,
+        clockrate, rtx_target_pt, rtx_target_ssrc, media);
+    if (original_rtx_target_pt != rtx_target_pt)
+      _pick_rtx_payload_types (webrtc, WEBRTC_TRANSCEIVER (trans), reserved_pts,
+          clockrate, original_rtx_target_pt, rtx_target_ssrc, media);
+    g_array_free (reserved_pts, TRUE);
   }
 
-  _media_add_ssrcs (media, caps, webrtc, trans);
+  _media_add_ssrcs (media, caps, webrtc, WEBRTC_TRANSCEIVER (trans));
 
   /* Some identifier; we also add the media name to it so it's identifiable */
   sdp_mid = g_strdup_printf ("%s%u", gst_sdp_media_get_media (media),
@@ -1705,7 +1801,8 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
 }
 
 static void
-_media_add_fec (GstSDPMedia * media, WebRTCTransceiver * trans, GstCaps * caps)
+_media_add_fec (GstSDPMedia * media, WebRTCTransceiver * trans, GstCaps * caps,
+    gint * rtx_target_pt)
 {
   guint i;
 
@@ -1730,6 +1827,7 @@ _media_add_fec (GstSDPMedia * media, WebRTCTransceiver * trans, GstCaps * caps)
           gst_sdp_media_add_format (media, str);
           g_free (str);
           str = g_strdup_printf ("%u red/%d", pt, clock_rate);
+          *rtx_target_pt = pt;
           gst_sdp_media_add_attribute (media, "rtpmap", str);
           g_free (str);
         } else if (!g_strcmp0 (encoding_name, "ULPFEC")) {
@@ -1745,6 +1843,70 @@ _media_add_fec (GstSDPMedia * media, WebRTCTransceiver * trans, GstCaps * caps)
       }
     }
   }
+}
+
+static void
+_media_add_rtx (GstSDPMedia * media, WebRTCTransceiver * trans,
+    GstCaps * offer_caps, gint target_pt, guint target_ssrc)
+{
+  guint i;
+  const GstStructure *s;
+
+  if (trans->local_rtx_ssrc_map)
+    gst_structure_free (trans->local_rtx_ssrc_map);
+
+  trans->local_rtx_ssrc_map =
+      gst_structure_new_empty ("application/x-rtp-ssrc-map");
+
+  for (i = 0; i < gst_caps_get_size (offer_caps); i++) {
+    s = gst_caps_get_structure (offer_caps, i);
+
+    if (gst_structure_has_name (s, "application/x-rtp")) {
+      const gchar *encoding_name =
+          gst_structure_get_string (s, "encoding-name");
+      const gchar *apt_str = gst_structure_get_string (s, "apt");
+      gint apt;
+      gint clock_rate;
+      gint pt;
+
+      if (!apt_str)
+        continue;
+
+      apt = atoi (apt_str);
+
+      if (gst_structure_get_int (s, "clock-rate", &clock_rate) &&
+          gst_structure_get_int (s, "payload", &pt) && apt == target_pt) {
+        if (!g_strcmp0 (encoding_name, "RTX")) {
+          gchar *str;
+
+          str = g_strdup_printf ("%u", pt);
+          gst_sdp_media_add_format (media, str);
+          g_free (str);
+          str = g_strdup_printf ("%u rtx/%d", pt, clock_rate);
+          gst_sdp_media_add_attribute (media, "rtpmap", str);
+          g_free (str);
+
+          str = g_strdup_printf ("%d apt=%d", pt, apt);
+          gst_sdp_media_add_attribute (media, "fmtp", str);
+          g_free (str);
+
+          str = g_strdup_printf ("%u", target_ssrc);
+          gst_structure_set (trans->local_rtx_ssrc_map, str, G_TYPE_UINT,
+              g_random_int (), NULL);
+        }
+      }
+    }
+  }
+}
+
+static void
+_get_rtx_target_pt_and_ssrc_from_caps (GstCaps * answer_caps, gint * target_pt,
+    guint * target_ssrc)
+{
+  const GstStructure *s = gst_caps_get_structure (answer_caps, 0);
+
+  gst_structure_get_int (s, "payload", target_pt);
+  gst_structure_get_uint (s, "ssrc", target_ssrc);
 }
 
 static GstSDPMessage *
@@ -1796,6 +1958,8 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     gchar *cert;
     guint j;
     guint k;
+    gint target_pt = -1;
+    guint target_ssrc = 0;
 
     gst_sdp_media_new (&media);
     gst_sdp_media_set_port_info (media, 9, 0);
@@ -1850,7 +2014,7 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
       rtp_trans =
           g_array_index (webrtc->priv->transceivers, GstWebRTCRTPTransceiver *,
           j);
-      trans_caps = _find_codec_preferences (webrtc, rtp_trans, GST_PAD_SINK, i);
+      trans_caps = _find_codec_preferences (webrtc, rtp_trans, GST_PAD_SINK, j);
 
       GST_TRACE_OBJECT (webrtc, "trying to compare %" GST_PTR_FORMAT
           " and %" GST_PTR_FORMAT, offer_caps, trans_caps);
@@ -1912,8 +2076,14 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
 
     gst_sdp_media_set_media_from_caps (answer_caps, media);
 
-    _media_add_fec (media, trans, offer_caps);
-    _media_add_ssrcs (media, answer_caps, webrtc, rtp_trans);
+    _get_rtx_target_pt_and_ssrc_from_caps (answer_caps, &target_pt,
+        &target_ssrc);
+
+    _media_add_fec (media, trans, offer_caps, &target_pt);
+    _media_add_rtx (media, trans, offer_caps, target_pt, target_ssrc);
+
+    _media_add_ssrcs (media, answer_caps, webrtc,
+        WEBRTC_TRANSCEIVER (rtp_trans));
 
     gst_caps_unref (answer_caps);
     answer_caps = NULL;
@@ -3187,7 +3357,69 @@ static GstElement *
 on_rtpbin_request_aux_sender (GstElement * rtpbin, guint session_id,
     GstWebRTCBin * webrtc)
 {
-  return NULL;
+  TransportStream *stream;
+  GstStructure *pt_map = gst_structure_new_empty ("application/x-rtp-pt-map");
+  GstElement *ret = NULL;
+  GstWebRTCRTPTransceiver *trans;
+
+  stream = _find_transport_for_session (webrtc, session_id);
+  trans = _find_transceiver (webrtc, &session_id,
+      (FindTransceiverFunc) transceiver_match_for_mline);
+
+  if (stream) {
+    guint i;
+
+    for (i = 0; i < stream->ptmap->len; i++) {
+      PtMapItem *item = &g_array_index (stream->ptmap, PtMapItem, i);
+      if (!gst_caps_is_empty (item->caps)) {
+        GstStructure *s = gst_caps_get_structure (item->caps, 0);
+        gint pt;
+        const gchar *apt_str = gst_structure_get_string (s, "apt");
+
+        if (!apt_str)
+          continue;
+
+        if (!g_strcmp0 (gst_structure_get_string (s, "encoding-name"), "RTX") &&
+            gst_structure_get_int (s, "payload", &pt)) {
+          gst_structure_set (pt_map, apt_str, G_TYPE_UINT, pt, NULL);
+        }
+      }
+    }
+  }
+
+  if (gst_structure_n_fields (pt_map)) {
+    GstElement *rtx;
+    GstPad *pad;
+    gchar *name;
+
+    GST_INFO ("creating AUX sender");
+    ret = gst_bin_new (NULL);
+    rtx = gst_element_factory_make ("rtprtxsend", NULL);
+    g_object_set (rtx, "payload-type-map", pt_map, "max-size-packets", 500,
+        NULL);
+
+    if (WEBRTC_TRANSCEIVER (trans)->local_rtx_ssrc_map)
+      g_object_set (rtx, "ssrc-map",
+          WEBRTC_TRANSCEIVER (trans)->local_rtx_ssrc_map, NULL);
+
+    gst_bin_add (GST_BIN (ret), rtx);
+
+    pad = gst_element_get_static_pad (rtx, "src");
+    name = g_strdup_printf ("src_%u", session_id);
+    gst_element_add_pad (ret, gst_ghost_pad_new (name, pad));
+    g_free (name);
+    gst_object_unref (pad);
+
+    pad = gst_element_get_static_pad (rtx, "sink");
+    name = g_strdup_printf ("sink_%u", session_id);
+    gst_element_add_pad (ret, gst_ghost_pad_new (name, pad));
+    g_free (name);
+    gst_object_unref (pad);
+  }
+
+  gst_structure_free (pt_map);
+
+  return ret;
 }
 
 static GstElement *
@@ -3195,41 +3427,73 @@ on_rtpbin_request_aux_receiver (GstElement * rtpbin, guint session_id,
     GstWebRTCBin * webrtc)
 {
   GstElement *ret = NULL;
+  GstElement *prev = NULL;
+  GstPad *sinkpad = NULL;
   TransportStream *stream;
-  gint pt = 0;
+  gint red_pt = 0;
+  gint rtx_pt = 0;
 
   stream = _find_transport_for_session (webrtc, session_id);
 
-  if (stream)
-    pt = _transport_stream_get_pt (stream, "RED");
+  if (stream) {
+    red_pt = _transport_stream_get_pt (stream, "RED");
+    rtx_pt = _transport_stream_get_pt (stream, "RTX");
+  }
 
-  if (pt) {
+  if (red_pt || rtx_pt)
+    ret = gst_bin_new (NULL);
+
+  if (rtx_pt) {
+    GstCaps *rtx_caps = _transport_stream_get_caps_for_pt (stream, rtx_pt);
+    GstElement *rtx = gst_element_factory_make ("rtprtxreceive", NULL);
+    GstStructure *pt_map;
+    const GstStructure *s = gst_caps_get_structure (rtx_caps, 0);
+
+    gst_bin_add (GST_BIN (ret), rtx);
+
+    pt_map = gst_structure_new_empty ("application/x-rtp-pt-map");
+    gst_structure_set (pt_map, gst_structure_get_string (s, "apt"), G_TYPE_UINT,
+        rtx_pt, NULL);
+    g_object_set (rtx, "payload-type-map", pt_map, NULL);
+
+    sinkpad = gst_element_get_static_pad (rtx, "sink");
+
+    prev = rtx;
+  }
+
+  if (red_pt) {
     GstElement *rtpreddec = gst_element_factory_make ("rtpreddec", NULL);
-    GstPad *sinkpad = gst_element_get_static_pad (rtpreddec, "sink");
-    GstPad *srcpad = gst_element_get_static_pad (rtpreddec, "src");
-    GstPad *ghost;
-    gchar *name;
 
     GST_DEBUG_OBJECT (webrtc, "Creating RED decoder for pt %d in session %u",
-        pt, session_id);
-
-    ret = gst_bin_new (NULL);
+        red_pt, session_id);
 
     gst_bin_add (GST_BIN (ret), rtpreddec);
 
-    name = g_strdup_printf ("sink_%u", session_id);
-    ghost = gst_ghost_pad_new (name, sinkpad);
+    g_object_set (rtpreddec, "pt", red_pt, NULL);
+
+    if (prev)
+      gst_element_link (prev, rtpreddec);
+    else
+      sinkpad = gst_element_get_static_pad (rtpreddec, "sink");
+
+    prev = rtpreddec;
+  }
+
+  if (sinkpad) {
+    gchar *name = g_strdup_printf ("sink_%u", session_id);
+    GstPad *ghost = gst_ghost_pad_new (name, sinkpad);
     g_free (name);
     gst_object_unref (sinkpad);
     gst_element_add_pad (ret, ghost);
+  }
 
-    name = g_strdup_printf ("src_%u", session_id);
-    ghost = gst_ghost_pad_new (name, srcpad);
+  if (prev) {
+    gchar *name = g_strdup_printf ("src_%u", session_id);
+    GstPad *srcpad = gst_element_get_static_pad (prev, "src");
+    GstPad *ghost = gst_ghost_pad_new (name, srcpad);
     g_free (name);
     gst_object_unref (srcpad);
     gst_element_add_pad (ret, ghost);
-
-    g_object_set (rtpreddec, "pt", pt, NULL);
   }
 
   return ret;
@@ -3365,6 +3629,18 @@ static void
 on_rtpbin_new_jitterbuffer (GstElement * rtpbin, GstElement * jitterbuffer,
     guint session_id, guint ssrc, GstWebRTCBin * webrtc)
 {
+  GstWebRTCRTPTransceiver *trans;
+
+  trans = _find_transceiver (webrtc, &session_id,
+      (FindTransceiverFunc) transceiver_match_for_mline);
+
+  if (trans) {
+    /* We don't set do-retransmission on rtpbin as we want per-session control */
+    g_object_set (jitterbuffer, "do-retransmission",
+        WEBRTC_TRANSCEIVER (trans)->do_nack, NULL);
+  } else {
+    g_assert_not_reached ();
+  }
 }
 
 static void

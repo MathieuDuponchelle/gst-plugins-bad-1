@@ -127,6 +127,10 @@ webrtc_transceiver_finalize (GObject * object)
     gst_object_unref (trans->stream);
   trans->stream = NULL;
 
+  if (trans->local_rtx_ssrc_map)
+    gst_structure_free (trans->local_rtx_ssrc_map);
+  trans->local_rtx_ssrc_map = NULL;
+
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
 
