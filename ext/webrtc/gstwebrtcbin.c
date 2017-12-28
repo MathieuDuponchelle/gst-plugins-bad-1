@@ -79,6 +79,8 @@
  * how to deal with replacing a input/output track/stream
  */
 
+static void _update_need_negotiation (GstWebRTCBin * webrtc);
+
 #define GST_CAT_DEFAULT gst_webrtc_bin_debug
 GST_DEBUG_CATEGORY_STATIC (GST_CAT_DEFAULT);
 
@@ -120,6 +122,10 @@ gst_webrtc_bin_pad_finalize (GObject * object)
   if (pad->trans)
     gst_object_unref (pad->trans);
   pad->trans = NULL;
+
+  if (pad->received_caps)
+    gst_caps_unref (pad->received_caps);
+  pad->received_caps = NULL;
 
   G_OBJECT_CLASS (gst_webrtc_bin_pad_parent_class)->finalize (object);
 }
@@ -169,6 +175,27 @@ _transport_stream_get_pt (TransportStream * stream, gchar * encoding_name)
   return ret;
 }
 
+static gboolean
+gst_webrtcbin_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
+{
+  GstWebRTCBinPad *wpad = GST_WEBRTC_BIN_PAD (pad);
+
+  if (GST_EVENT_TYPE (event) == GST_EVENT_CAPS) {
+    GstCaps *caps;
+    gboolean do_update;
+
+    gst_event_parse_caps (event, &caps);
+    do_update = (!wpad->received_caps
+        || gst_caps_is_equal (wpad->received_caps, caps));
+    gst_caps_replace (&wpad->received_caps, caps);
+
+    if (do_update)
+      _update_need_negotiation (GST_WEBRTC_BIN (parent));
+  }
+
+  return gst_pad_event_default (pad, parent, event);
+}
+
 static void
 gst_webrtc_bin_pad_init (GstWebRTCBinPad * pad)
 {
@@ -180,6 +207,8 @@ gst_webrtc_bin_pad_new (const gchar * name, GstPadDirection direction)
   GstWebRTCBinPad *pad =
       g_object_new (gst_webrtc_bin_pad_get_type (), "name", name, "direction",
       direction, NULL);
+
+  gst_pad_set_event_function (GST_PAD (pad), gst_webrtcbin_sink_event);
 
   if (!gst_ghost_pad_construct (GST_GHOST_PAD (pad))) {
     gst_object_unref (pad);
@@ -1034,6 +1063,34 @@ _update_peer_connection_state (GstWebRTCBin * webrtc)
       NULL, NULL);
 }
 
+static gboolean
+_all_sinks_have_caps (GstWebRTCBin * webrtc)
+{
+  GList *l;
+  gboolean res = FALSE;
+
+  GST_OBJECT_LOCK (webrtc);
+  l = GST_ELEMENT (webrtc)->pads;
+  for (; l; l = g_list_next (l)) {
+    if (!GST_IS_WEBRTC_BIN_PAD (l->data))
+      continue;
+    if (!GST_WEBRTC_BIN_PAD (l->data)->received_caps)
+      goto done;
+  }
+
+  l = webrtc->priv->pending_pads;
+  for (; l; l = g_list_next (l)) {
+    if (!GST_IS_WEBRTC_BIN_PAD (l->data))
+      goto done;
+  }
+
+  res = TRUE;
+
+done:
+  GST_OBJECT_UNLOCK (webrtc);
+  return res;
+}
+
 /* http://w3c.github.io/webrtc-pc/#dfn-check-if-negotiation-is-needed */
 static gboolean
 _check_if_negotiation_is_needed (GstWebRTCBin * webrtc)
@@ -1041,6 +1098,14 @@ _check_if_negotiation_is_needed (GstWebRTCBin * webrtc)
   int i;
 
   GST_LOG_OBJECT (webrtc, "checking if negotiation is needed");
+
+  /* We can't negotiate until we have received caps on all our sink pads,
+   * as we will need the ssrcs in our offer / answer */
+  if (!_all_sinks_have_caps (webrtc)) {
+    GST_LOG_OBJECT (webrtc,
+        "no negotiation possible until caps have been received on all sink pads");
+    return FALSE;
+  }
 
   /* If any implementation-specific negotiation is required, as described at
    * the start of this section, return "true".
@@ -3442,7 +3507,6 @@ gst_webrtc_bin_request_new_pad (GstElement * element, GstPadTemplate * templ,
     webrtc->priv->pending_sink_transceivers =
         g_list_append (webrtc->priv->pending_sink_transceivers,
         gst_object_ref (pad));
-    /* TODO: update negotiation-needed */
     _add_pad (webrtc, pad);
   }
 
