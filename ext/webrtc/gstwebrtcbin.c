@@ -2456,6 +2456,16 @@ _add_ice_candidate (GstWebRTCBin * webrtc, IceCandidateItem * item)
   gst_webrtc_ice_add_candidate (webrtc->priv->ice, stream, item->candidate);
 }
 
+static gboolean
+_filter_sdp_fields (GQuark field_id, const GValue * value,
+    GstStructure * new_structure)
+{
+  if (strncmp (g_quark_to_string (field_id), "a-", 2)) {
+    gst_structure_id_set_value (new_structure, field_id, value);
+  }
+  return TRUE;
+}
+
 static void
 _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
     const GstSDPMessage * sdp, guint media_idx,
@@ -2535,6 +2545,7 @@ _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
         GstStructure *s;
         PtMapItem item;
         gint pt;
+        guint j;
 
         pt = atoi (gst_sdp_media_get_format (media, i));
 
@@ -2558,8 +2569,20 @@ _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
                 "ULPFEC"))
           gst_structure_set (s, "is-fec", G_TYPE_BOOLEAN, TRUE, NULL);
 
+        item.caps = gst_caps_new_empty ();
+
+        for (j = 0; j < gst_caps_get_size (outcaps); j++) {
+          GstStructure *s = gst_caps_get_structure (outcaps, j);
+          GstStructure *filtered =
+              gst_structure_new_empty (gst_structure_get_name (s));
+
+          gst_structure_foreach (s,
+              (GstStructureForeachFunc) _filter_sdp_fields, filtered);
+          gst_caps_append_structure (item.caps, filtered);
+        }
+
         item.pt = pt;
-        item.caps = outcaps;
+        gst_caps_unref (outcaps);
 
         g_array_append_val (stream->ptmap, item);
       }
