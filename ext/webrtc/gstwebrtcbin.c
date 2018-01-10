@@ -1289,20 +1289,20 @@ _add_supported_attributes_to_caps (GstWebRTCBin * webrtc,
 
   ret = gst_caps_make_writable (caps);
 
-  if (trans->do_nack) {
-    for (i = 0; i < gst_caps_get_size (ret); i++) {
-      GstStructure *s = gst_caps_get_structure (ret, i);
+  for (i = 0; i < gst_caps_get_size (ret); i++) {
+    GstStructure *s = gst_caps_get_structure (ret, i);
 
+    if (trans->do_nack)
       if (!gst_structure_has_field (s, "rtcp-fb-nack"))
         gst_structure_set (s, "rtcp-fb-nack", G_TYPE_BOOLEAN, TRUE, NULL);
-      if (!gst_structure_has_field (s, "rtcp-fb-nack-pli"))
-        gst_structure_set (s, "rtcp-fb-nack-pli", G_TYPE_BOOLEAN, TRUE, NULL);
-      /* FIXME: is this needed? */
-      /*if (!gst_structure_has_field (s, "rtcp-fb-transport-cc"))
-         gst_structure_set (s, "rtcp-fb-nack-pli", G_TYPE_BOOLEAN, TRUE, NULL); */
 
-      /* FIXME: codec-specific paramters? */
-    }
+    if (!gst_structure_has_field (s, "rtcp-fb-nack-pli"))
+      gst_structure_set (s, "rtcp-fb-nack-pli", G_TYPE_BOOLEAN, TRUE, NULL);
+    /* FIXME: is this needed? */
+    /*if (!gst_structure_has_field (s, "rtcp-fb-transport-cc"))
+       gst_structure_set (s, "rtcp-fb-nack-pli", G_TYPE_BOOLEAN, TRUE, NULL); */
+
+    /* FIXME: codec-specific paramters? */
   }
 
   return ret;
@@ -1573,8 +1573,9 @@ _media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
   guint i;
   RtxSsrcData data = { media, webrtc, trans };
 
-  gst_structure_foreach (trans->local_rtx_ssrc_map,
-      (GstStructureForeachFunc) _media_add_rtx_ssrc_group, media);
+  if (trans->local_rtx_ssrc_map)
+    gst_structure_foreach (trans->local_rtx_ssrc_map,
+        (GstStructureForeachFunc) _media_add_rtx_ssrc_group, media);
 
   for (i = 0; i < gst_caps_get_size (caps); i++) {
     const GstStructure *s = gst_caps_get_structure (caps, i);
@@ -1595,8 +1596,9 @@ _media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
     }
   }
 
-  gst_structure_foreach (trans->local_rtx_ssrc_map,
-      (GstStructureForeachFunc) _media_add_rtx_ssrc, &data);
+  if (trans->local_rtx_ssrc_map)
+    gst_structure_foreach (trans->local_rtx_ssrc_map,
+        (GstStructureForeachFunc) _media_add_rtx_ssrc, &data);
 }
 
 /* based off https://tools.ietf.org/html/draft-ietf-rtcweb-jsep-18#section-5.2.1 */
@@ -1959,6 +1961,7 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     guint j;
     guint k;
     gint target_pt = -1;
+    gint original_target_pt = -1;
     guint target_ssrc = 0;
 
     gst_sdp_media_new (&media);
@@ -2069,8 +2072,7 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
       answer_caps = gst_caps_make_writable (answer_caps);
       for (k = 0; k < gst_caps_get_size (answer_caps); k++) {
         GstStructure *s = gst_caps_get_structure (answer_caps, k);
-        gst_structure_remove_fields (s, "rtcp-fb-nack", "rtcp-fb-nack-pli",
-            NULL);
+        gst_structure_remove_fields (s, "rtcp-fb-nack", NULL);
       }
     }
 
@@ -2079,11 +2081,19 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     _get_rtx_target_pt_and_ssrc_from_caps (answer_caps, &target_pt,
         &target_ssrc);
 
-    _media_add_fec (media, trans, offer_caps, &target_pt);
-    _media_add_rtx (media, trans, offer_caps, target_pt, target_ssrc);
+    original_target_pt = target_pt;
 
-    _media_add_ssrcs (media, answer_caps, webrtc,
-        WEBRTC_TRANSCEIVER (rtp_trans));
+    _media_add_fec (media, trans, offer_caps, &target_pt);
+    if (trans->do_nack) {
+      _media_add_rtx (media, trans, offer_caps, target_pt, target_ssrc);
+      if (target_pt != original_target_pt)
+        _media_add_rtx (media, trans, offer_caps, original_target_pt,
+            target_ssrc);
+    }
+
+    if (answer_dir != GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_RECVONLY)
+      _media_add_ssrcs (media, answer_caps, webrtc,
+          WEBRTC_TRANSCEIVER (rtp_trans));
 
     gst_caps_unref (answer_caps);
     answer_caps = NULL;
