@@ -79,6 +79,12 @@ webrtc_transceiver_set_property (GObject * object, guint prop_id,
     case PROP_WEBRTC:
       gst_object_set_parent (GST_OBJECT (trans), g_value_get_object (value));
       break;
+  }
+
+  GST_OBJECT_LOCK (trans);
+  switch (prop_id) {
+    case PROP_WEBRTC:
+      break;
     case PROP_FEC_TYPE:
       trans->fec_type = g_value_get_enum (value);
       break;
@@ -92,6 +98,7 @@ webrtc_transceiver_set_property (GObject * object, guint prop_id,
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
+  GST_OBJECT_UNLOCK (trans);
 }
 
 static void

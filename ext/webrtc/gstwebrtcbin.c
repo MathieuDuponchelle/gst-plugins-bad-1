@@ -2472,7 +2472,7 @@ static gboolean
 _filter_sdp_fields (GQuark field_id, const GValue * value,
     GstStructure * new_structure)
 {
-  if (strncmp (g_quark_to_string (field_id), "a-", 2)) {
+  if (!g_str_has_prefix (g_quark_to_string (field_id), "a-")) {
     gst_structure_id_set_value (new_structure, field_id, value);
   }
   return TRUE;
