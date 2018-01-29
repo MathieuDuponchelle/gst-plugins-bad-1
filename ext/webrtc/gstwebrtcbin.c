@@ -1550,18 +1550,23 @@ static gboolean
 _media_add_rtx_ssrc (GQuark field_id, const GValue * value, RtxSsrcData * data)
 {
   gchar *str;
+  GstStructure *sdes;
+  const gchar *cname;
+
+  g_object_get (data->webrtc->rtpbin, "sdes", &sdes, NULL);
+  cname = gst_structure_get_string (sdes, "cname");
 
   str =
       g_strdup_printf ("%u msid:%s %s", g_value_get_uint (value),
-      GST_OBJECT_NAME (data->webrtc), GST_OBJECT_NAME (data->trans));
+      cname, GST_OBJECT_NAME (data->trans));
   gst_sdp_media_add_attribute (data->media, "ssrc", str);
   g_free (str);
 
-  str =
-      g_strdup_printf ("%u cname:%s", g_value_get_uint (value),
-      GST_OBJECT_NAME (data->webrtc));
+  str = g_strdup_printf ("%u cname:%s", g_value_get_uint (value), cname);
   gst_sdp_media_add_attribute (data->media, "ssrc", str);
   g_free (str);
+
+  gst_structure_free (sdes);
 
   return TRUE;
 }
@@ -1572,6 +1577,11 @@ _media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
 {
   guint i;
   RtxSsrcData data = { media, webrtc, trans };
+  const gchar *cname;
+  GstStructure *sdes;
+
+  g_object_get (webrtc->rtpbin, "sdes", &sdes, NULL);
+  cname = gst_structure_get_string (sdes, "cname");
 
   if (trans->local_rtx_ssrc_map)
     gst_structure_foreach (trans->local_rtx_ssrc_map,
@@ -1585,16 +1595,18 @@ _media_add_ssrcs (GstSDPMedia * media, GstCaps * caps, GstWebRTCBin * webrtc,
       gchar *str;
 
       str =
-          g_strdup_printf ("%u msid:%s %s", ssrc, GST_OBJECT_NAME (webrtc),
+          g_strdup_printf ("%u msid:%s %s", ssrc, cname,
           GST_OBJECT_NAME (trans));
       gst_sdp_media_add_attribute (media, "ssrc", str);
       g_free (str);
 
-      str = g_strdup_printf ("%u cname:%s", ssrc, GST_OBJECT_NAME (webrtc));
+      str = g_strdup_printf ("%u cname:%s", ssrc, cname);
       gst_sdp_media_add_attribute (media, "ssrc", str);
       g_free (str);
     }
   }
+
+  gst_structure_free (sdes);
 
   if (trans->local_rtx_ssrc_map)
     gst_structure_foreach (trans->local_rtx_ssrc_map,
