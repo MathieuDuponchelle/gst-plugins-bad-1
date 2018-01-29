@@ -3680,8 +3680,8 @@ static void
 on_rtpbin_new_storage (GstElement * rtpbin, GstElement * storage,
     guint session_id, GstWebRTCBin * webrtc)
 {
-  /* FIXME: should only set that when needed */
-  g_object_set (storage, "storage-size", 1000, NULL);
+  /* TODO: when exposing latency, set size-time based on that */
+  g_object_set (storage, "size-time", 250 * GST_MSECOND, NULL);
 }
 
 static GstElement *
