@@ -35,6 +35,7 @@ typedef struct
 {
   guint8 pt;
   GstCaps *caps;
+  guint media_idx;
 } PtMapItem;
 
 struct _TransportStream
