@@ -2235,7 +2235,7 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     gchar *ufrag, *pwd, *sdp_mid;
     gboolean bundle_only = bundled_mids
         && webrtc->bundle_policy == GST_WEBRTC_BUNDLE_POLICY_MAX_BUNDLE
-        && webrtc->priv->media_counter != 0;
+        && webrtc->priv->transceivers->len != 0;
 
     gst_sdp_media_init (&media);
     /* mandated by JSEP */
@@ -2470,7 +2470,7 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
       webrtc->pending_remote_description;
   guint i;
   GStrv bundled = NULL;
-  guint bundle_idx;
+  guint bundle_idx = 0;
   GString *bundled_mids = NULL;
 
   if (!webrtc->pending_remote_description) {
@@ -3499,7 +3499,7 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
   int i;
   gboolean ret = FALSE;
   GStrv bundled = NULL;
-  guint bundle_idx;
+  guint bundle_idx = 0;
 
   if (!_parse_bundle (webrtc, sdp->sdp, &bundled))
     goto done;
@@ -3653,7 +3653,7 @@ _set_description_task (GstWebRTCBin * webrtc, struct set_description *sd)
   GstWebRTCSignalingState new_signaling_state = webrtc->signaling_state;
   GError *error = NULL;
   GStrv bundled = NULL;
-  guint bundle_idx;
+  guint bundle_idx = 0;
   guint i;
 
   {
