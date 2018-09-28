@@ -2422,8 +2422,8 @@ _parse_bundle (GstWebRTCBin * webrtc, GstSDPMessage * sdp, GStrv * bundled)
 
   group = gst_sdp_message_get_attribute_val (sdp, "group");
 
-  if (group && g_str_has_prefix (group, "BUNDLE")) {
-    *bundled = g_strsplit (group + 7, " ", 0);
+  if (group && g_str_has_prefix (group, "BUNDLE ")) {
+    *bundled = g_strsplit (group + strlen ("BUNDLE "), " ", 0);
 
     if (!(*bundled)[0]) {
       GST_ERROR_OBJECT (webrtc,
