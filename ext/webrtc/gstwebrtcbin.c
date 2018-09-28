@@ -2967,18 +2967,18 @@ _connect_input_stream (GstWebRTCBin * webrtc, GstWebRTCBinPad * pad)
 
 /*
  * Bundle case:
- * ,-------------------  ----------------webrtcbin-------------------------,
- * ;                                                                       ;
- * ;                      ,-------rtpbin-------,   ,--transport_send_%u--, ;
- * ;                      ;    send_rtp_src_%u o---o rtp_sink            ; ;
- * ;                      ;                    ;   ;                     ; ;
- * ;                      ;   send_rtcp_src_%u o---o rtcp_sink           ; ;
- * ; sink_%u ,--funnel--, ;                    ;   '---------------------' ;
- * o---------o sink_%u  ; ;                    ;                           ;
- * ; sink_%u ;          o-o send_rtp_sink_%u   ;                           ;
- * o---------o sink_%u  ; ;                    ;                           ;
- * ;         '----------' '--------------------'                           ;
- * '-----------------------------------------------------------------------'
+ * ,--------------------------------webrtcbin--------------------------------,
+ * ;                                                                         ;
+ * ;                        ,-------rtpbin-------,   ,--transport_send_%u--, ;
+ * ;                        ;    send_rtp_src_%u o---o rtp_sink            ; ;
+ * ;                        ;                    ;   ;                     ; ;
+ * ;                        ;   send_rtcp_src_%u o---o rtcp_sink           ; ;
+ * ; sink_%u ,---funnel---, ;                    ;   '---------------------' ;
+ * o---------o sink_%u    ; ;                    ;                           ;
+ * ; sink_%u ;        src o-o send_rtp_sink_%u   ;                           ;
+ * o---------o sink_%u    ; ;                    ;                           ;
+ * ;         '------------' '--------------------'                           ;
+ * '-------------------------------------------------------------------------'
  */
   GstPadTemplate *rtp_templ;
   GstPad *rtp_sink;
