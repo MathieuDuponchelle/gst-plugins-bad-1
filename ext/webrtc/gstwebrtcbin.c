@@ -3167,74 +3167,74 @@ _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
     remote_dir = _get_direction_from_media (remote_media);
     new_dir = _get_final_direction (local_dir, remote_dir);
 
-    if (new_dir != GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_NONE) {
-      /* get proto */
-      proto = gst_sdp_media_get_proto (media);
-      if (proto != NULL) {
-        /* Parse global SDP attributes once */
-        global_caps = gst_caps_new_empty_simple ("application/x-unknown");
-        GST_DEBUG_OBJECT (webrtc,
-            "mapping sdp session level attributes to caps");
-        gst_sdp_message_attributes_to_caps (sdp, global_caps);
-        GST_DEBUG_OBJECT (webrtc, "mapping sdp media level attributes to caps");
-        gst_sdp_media_attributes_to_caps (media, global_caps);
+    if (new_dir == GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_NONE)
+      return;
 
-        if (!bundled) {
-          /* clear the ptmap */
-          g_array_set_size (stream->ptmap, 0);
-        }
+    /* get proto */
+    proto = gst_sdp_media_get_proto (media);
+    if (proto != NULL) {
+      /* Parse global SDP attributes once */
+      global_caps = gst_caps_new_empty_simple ("application/x-unknown");
+      GST_DEBUG_OBJECT (webrtc, "mapping sdp session level attributes to caps");
+      gst_sdp_message_attributes_to_caps (sdp, global_caps);
+      GST_DEBUG_OBJECT (webrtc, "mapping sdp media level attributes to caps");
+      gst_sdp_media_attributes_to_caps (media, global_caps);
 
-        len = gst_sdp_media_formats_len (media);
-        for (i = 0; i < len; i++) {
-          GstCaps *caps, *outcaps;
-          GstStructure *s;
-          PtMapItem item;
-          gint pt;
-          guint j;
-
-          pt = atoi (gst_sdp_media_get_format (media, i));
-
-          GST_DEBUG_OBJECT (webrtc, " looking at %d pt: %d", i, pt);
-
-          /* convert caps */
-          caps = gst_sdp_media_get_caps_from_media (media, pt);
-          if (caps == NULL) {
-            GST_WARNING_OBJECT (webrtc, " skipping pt %d without caps", pt);
-            continue;
-          }
-
-          /* Merge in global caps */
-          /* Intersect will merge in missing fields to the current caps */
-          outcaps = gst_caps_intersect (caps, global_caps);
-          gst_caps_unref (caps);
-
-          s = gst_caps_get_structure (outcaps, 0);
-          gst_structure_set_name (s, "application/x-rtp");
-          if (!g_strcmp0 (gst_structure_get_string (s, "encoding-name"),
-                  "ULPFEC"))
-            gst_structure_set (s, "is-fec", G_TYPE_BOOLEAN, TRUE, NULL);
-
-          item.caps = gst_caps_new_empty ();
-
-          for (j = 0; j < gst_caps_get_size (outcaps); j++) {
-            GstStructure *s = gst_caps_get_structure (outcaps, j);
-            GstStructure *filtered =
-                gst_structure_new_empty (gst_structure_get_name (s));
-
-            gst_structure_foreach (s,
-                (GstStructureForeachFunc) _filter_sdp_fields, filtered);
-            gst_caps_append_structure (item.caps, filtered);
-          }
-
-          item.pt = pt;
-          item.media_idx = media_idx;
-          gst_caps_unref (outcaps);
-
-          g_array_append_val (stream->ptmap, item);
-        }
-
-        gst_caps_unref (global_caps);
+      if (!bundled) {
+        /* clear the ptmap */
+        g_array_set_size (stream->ptmap, 0);
       }
+
+      len = gst_sdp_media_formats_len (media);
+      for (i = 0; i < len; i++) {
+        GstCaps *caps, *outcaps;
+        GstStructure *s;
+        PtMapItem item;
+        gint pt;
+        guint j;
+
+        pt = atoi (gst_sdp_media_get_format (media, i));
+
+        GST_DEBUG_OBJECT (webrtc, " looking at %d pt: %d", i, pt);
+
+        /* convert caps */
+        caps = gst_sdp_media_get_caps_from_media (media, pt);
+        if (caps == NULL) {
+          GST_WARNING_OBJECT (webrtc, " skipping pt %d without caps", pt);
+          continue;
+        }
+
+        /* Merge in global caps */
+        /* Intersect will merge in missing fields to the current caps */
+        outcaps = gst_caps_intersect (caps, global_caps);
+        gst_caps_unref (caps);
+
+        s = gst_caps_get_structure (outcaps, 0);
+        gst_structure_set_name (s, "application/x-rtp");
+        if (!g_strcmp0 (gst_structure_get_string (s, "encoding-name"),
+                "ULPFEC"))
+          gst_structure_set (s, "is-fec", G_TYPE_BOOLEAN, TRUE, NULL);
+
+        item.caps = gst_caps_new_empty ();
+
+        for (j = 0; j < gst_caps_get_size (outcaps); j++) {
+          GstStructure *s = gst_caps_get_structure (outcaps, j);
+          GstStructure *filtered =
+              gst_structure_new_empty (gst_structure_get_name (s));
+
+          gst_structure_foreach (s,
+              (GstStructureForeachFunc) _filter_sdp_fields, filtered);
+          gst_caps_append_structure (item.caps, filtered);
+        }
+
+        item.pt = pt;
+        item.media_idx = media_idx;
+        gst_caps_unref (outcaps);
+
+        g_array_append_val (stream->ptmap, item);
+      }
+
+      gst_caps_unref (global_caps);
     }
 
     if (prev_dir != GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_NONE
