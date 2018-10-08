@@ -1556,8 +1556,6 @@ _get_or_create_rtp_transport_channel (GstWebRTCBin * webrtc, guint session_id)
     gst_bin_add (GST_BIN (webrtc), GST_ELEMENT (ret->send_bin));
     gst_bin_add (GST_BIN (webrtc), GST_ELEMENT (ret->receive_bin));
     g_array_append_val (webrtc->priv->transports, ret);
-  } else {
-    ret = gst_object_ref (ret);
   }
 
   rtcp_src =
@@ -2762,9 +2760,7 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
           g_assert (mid);
           g_string_append_printf (bundled_mids, " %s", mid);
         } else {
-          item = _find_transport_for_session (webrtc, i);
-          if (!item)
-            item = _get_or_create_transport_stream (webrtc, i, FALSE);
+          item = _get_or_create_transport_stream (webrtc, i, FALSE);
         }
         webrtc_transceiver_set_transport (trans, item);
       }
@@ -3520,8 +3516,6 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
     transport_receive_bin_set_receive_state (bundle_stream->receive_bin,
         RECEIVE_STATE_DROP);
 
-    gst_object_unref (bundle_stream);
-
     _connect_rtpfunnel (webrtc, bundle_idx);
   }
 
@@ -3550,7 +3544,7 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
 
     if (source == SDP_LOCAL && sdp->type == GST_WEBRTC_SDP_TYPE_OFFER && !trans) {
       GST_ERROR ("State mismatch.  Could not find local transceiver by mline.");
-      return FALSE;
+      goto done;
     } else {
       if (g_strcmp0 (gst_sdp_media_get_media (media), "audio") == 0 ||
           g_strcmp0 (gst_sdp_media_get_media (media), "video") == 0) {
