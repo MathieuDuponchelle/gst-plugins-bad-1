@@ -70,7 +70,7 @@
  * assert sending payload type matches the stream
  * reconfiguration (of anything)
  * LS groups
- * bundling
+ * balanced bundle policy
  * setting custom DTLS certificates
  *
  * seperate session id's from mlineindex properly
@@ -3813,6 +3813,7 @@ _set_description_task (GstWebRTCBin * webrtc, struct set_description *sd)
 
       media = gst_sdp_message_get_media (sd->sdp->sdp, pad->mlineindex);
       /* skip rejected media */
+      /* FIXME: arrange for an appropriate flow return */
       if (gst_sdp_media_get_port (media) == 0)
         continue;
 
@@ -4042,7 +4043,6 @@ _on_ice_candidate (GstWebRTCICE * ice, guint session_id,
 {
   IceCandidateItem *item = g_new0 (IceCandidateItem, 1);
 
-  /* FIXME: bundle support */
   item->mlineindex = session_id;
   item->candidate = g_strdup (candidate);
 
