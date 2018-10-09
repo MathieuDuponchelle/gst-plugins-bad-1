@@ -281,11 +281,9 @@ gboolean
 validate_sdp (GstWebRTCBin * webrtc, SDPSource source,
     GstWebRTCSessionDescription * sdp, GError ** error)
 {
-#if 0
   const gchar *group, *bundle_ice_ufrag = NULL, *bundle_ice_pwd = NULL;
   gchar **group_members = NULL;
   gboolean is_bundle = FALSE;
-#endif
   int i;
 
   if (!_check_valid_state_for_sdp_change (webrtc, source, sdp->type, error))
@@ -294,30 +292,21 @@ validate_sdp (GstWebRTCBin * webrtc, SDPSource source,
     return FALSE;
 /* not explicitly required
   if (ICE && !_check_trickle_ice (sdp->sdp))
-    return FALSE;
+    return FALSE;*/
   group = gst_sdp_message_get_attribute_val (sdp->sdp, "group");
-  is_bundle = g_str_has_prefix (group, "BUNDLE");
+  is_bundle = group && g_str_has_prefix (group, "BUNDLE");
   if (is_bundle)
-    group_members = g_strsplit (&group[6], " ", -1);*/
+    group_members = g_strsplit (&group[6], " ", -1);
 
   for (i = 0; i < gst_sdp_message_medias_len (sdp->sdp); i++) {
     const GstSDPMedia *media = gst_sdp_message_get_media (sdp->sdp, i);
-#if 0
     const gchar *mid;
-    gboolean media_in_bundle = FALSE, first_media_in_bundle = FALSE;
-    gboolean bundle_only = FALSE;
-#endif
+    gboolean media_in_bundle = FALSE;
     if (!_media_has_mid (media, i, error))
       goto fail;
-#if 0
     mid = gst_sdp_media_get_attribute_val (media, "mid");
-    media_in_bundle = is_bundle && g_strv_contains (group_members, mid);
-    if (media_in_bundle)
-      bundle_only =
-          gst_sdp_media_get_attribute_val (media, "bundle-only") != NULL;
-    first_media_in_bundle = media_in_bundle
-        && g_strcmp0 (mid, group_members[0]) == 0;
-#endif
+    media_in_bundle = is_bundle
+        && g_strv_contains ((const gchar **) group_members, mid);
     if (!_media_get_ice_ufrag (sdp->sdp, i)) {
       g_set_error (error, GST_WEBRTC_BIN_ERROR, GST_WEBRTC_BIN_ERROR_BAD_SDP,
           "media %u is missing or contains an empty \'ice-ufrag\' attribute",
@@ -331,7 +320,6 @@ validate_sdp (GstWebRTCBin * webrtc, SDPSource source,
     }
     if (!_media_has_setup (media, i, error))
       goto fail;
-#if 0
     /* check paramaters in bundle are the same */
     if (media_in_bundle) {
       const gchar *ice_ufrag =
@@ -354,15 +342,14 @@ validate_sdp (GstWebRTCBin * webrtc, SDPSource source,
         goto fail;
       }
     }
-#endif
   }
 
-//  g_strv_free (group_members);
+  g_strfreev (group_members);
 
   return TRUE;
 
 fail:
-//  g_strv_free (group_members);
+  g_strfreev (group_members);
   return FALSE;
 }
 
