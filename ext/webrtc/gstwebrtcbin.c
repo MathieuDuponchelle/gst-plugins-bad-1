@@ -2157,6 +2157,8 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
   int i;
   gchar *str;
   GString *bundled_mids = NULL;
+  gchar *bundle_ufrag = NULL;
+  gchar *bundle_pwd = NULL;
 
   gst_sdp_message_new (&ret);
 
@@ -2182,6 +2184,10 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     bundled_mids = g_string_new ("BUNDLE");
   }
 
+  if (webrtc->bundle_policy != GST_WEBRTC_BUNDLE_POLICY_NONE) {
+    _generate_ice_credentials (&bundle_ufrag, &bundle_pwd);
+  }
+
   /* for each rtp transceiver */
   for (i = 0; i < webrtc->priv->transceivers->len; i++) {
     GstWebRTCRTPTransceiver *trans;
@@ -2200,7 +2206,13 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     gst_sdp_media_add_attribute (&media, "setup", "actpass");
 
     /* FIXME: only needed when restarting ICE */
-    _generate_ice_credentials (&ufrag, &pwd);
+    if (webrtc->bundle_policy == GST_WEBRTC_BUNDLE_POLICY_NONE) {
+      _generate_ice_credentials (&ufrag, &pwd);
+    } else {
+      ufrag = g_strdup (bundle_ufrag);
+      pwd = g_strdup (bundle_pwd);
+    }
+
     gst_sdp_media_add_attribute (&media, "ice-ufrag", ufrag);
     gst_sdp_media_add_attribute (&media, "ice-pwd", pwd);
     g_free (ufrag);
@@ -2233,7 +2245,12 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     gst_sdp_media_add_attribute (&media, "setup", "actpass");
 
     /* FIXME: only needed when restarting ICE */
-    _generate_ice_credentials (&ufrag, &pwd);
+    if (webrtc->bundle_policy == GST_WEBRTC_BUNDLE_POLICY_NONE) {
+      _generate_ice_credentials (&ufrag, &pwd);
+    } else {
+      ufrag = g_strdup (bundle_ufrag);
+      pwd = g_strdup (bundle_pwd);
+    }
     gst_sdp_media_add_attribute (&media, "ice-ufrag", ufrag);
     gst_sdp_media_add_attribute (&media, "ice-pwd", pwd);
     g_free (ufrag);
@@ -2287,6 +2304,12 @@ _create_offer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     gst_sdp_message_add_attribute (ret, "group", mids);
     g_free (mids);
   }
+
+  if (bundle_ufrag)
+    g_free (bundle_ufrag);
+
+  if (bundle_pwd)
+    g_free (bundle_pwd);
 
   /* FIXME: pre-emptively setup receiving elements when needed */
 
@@ -2463,6 +2486,8 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
   GStrv bundled = NULL;
   guint bundle_idx = 0;
   GString *bundled_mids = NULL;
+  gchar *bundle_ufrag = NULL;
+  gchar *bundle_pwd = NULL;
 
   if (!webrtc->pending_remote_description) {
     GST_ERROR_OBJECT (webrtc,
@@ -2483,6 +2508,8 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     if (webrtc->bundle_policy != GST_WEBRTC_BUNDLE_POLICY_NONE) {
       bundled_mids = g_string_new ("BUNDLE");
     }
+
+    _generate_ice_credentials (&bundle_ufrag, &bundle_pwd);
   }
 
   gst_sdp_message_new (&ret);
@@ -2536,7 +2563,12 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     {
       /* FIXME: only needed when restarting ICE */
       gchar *ufrag, *pwd;
-      _generate_ice_credentials (&ufrag, &pwd);
+      if (!bundled) {
+        _generate_ice_credentials (&ufrag, &pwd);
+      } else {
+        ufrag = g_strdup (bundle_ufrag);
+        pwd = g_strdup (bundle_pwd);
+      }
       gst_sdp_media_add_attribute (media, "ice-ufrag", ufrag);
       gst_sdp_media_add_attribute (media, "ice-pwd", pwd);
       g_free (ufrag);
@@ -2798,6 +2830,12 @@ _create_answer_task (GstWebRTCBin * webrtc, const GstStructure * options)
     gst_sdp_message_add_attribute (ret, "group", mids);
     g_free (mids);
   }
+
+  if (bundle_ufrag)
+    g_free (bundle_ufrag);
+
+  if (bundle_pwd)
+    g_free (bundle_pwd);
 
   /* FIXME: can we add not matched transceivers? */
 

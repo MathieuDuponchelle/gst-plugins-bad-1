@@ -327,7 +327,7 @@ validate_sdp (GstWebRTCBin * webrtc, SDPSource source,
       const gchar *ice_pwd = gst_sdp_media_get_attribute_val (media, "ice-pwd");
       if (!bundle_ice_ufrag)
         bundle_ice_ufrag = ice_ufrag;
-      else if (!g_strcmp0 (bundle_ice_ufrag, ice_ufrag) != 0) {
+      else if (g_strcmp0 (bundle_ice_ufrag, ice_ufrag) != 0) {
         g_set_error (error, GST_WEBRTC_BIN_ERROR, GST_WEBRTC_BIN_ERROR_BAD_SDP,
             "media %u has different ice-ufrag values in bundle. "
             "%s != %s", i, bundle_ice_ufrag, ice_ufrag);
@@ -335,10 +335,10 @@ validate_sdp (GstWebRTCBin * webrtc, SDPSource source,
       }
       if (!bundle_ice_pwd) {
         bundle_ice_pwd = ice_pwd;
-      } else if (g_strcmp0 (bundle_ice_pwd, ice_pwd) == 0) {
+      } else if (g_strcmp0 (bundle_ice_pwd, ice_pwd) != 0) {
         g_set_error (error, GST_WEBRTC_BIN_ERROR, GST_WEBRTC_BIN_ERROR_BAD_SDP,
-            "media %u has different ice-ufrag values in bundle. "
-            "%s != %s", i, bundle_ice_ufrag, ice_ufrag);
+            "media %u has different ice-pwd values in bundle. "
+            "%s != %s", i, bundle_ice_pwd, ice_pwd);
         goto fail;
       }
     }
