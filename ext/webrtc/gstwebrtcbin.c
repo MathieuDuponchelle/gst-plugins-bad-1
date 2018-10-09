@@ -1547,7 +1547,6 @@ _get_or_create_rtp_transport_channel (GstWebRTCBin * webrtc, guint session_id)
 {
   TransportStream *ret;
   gchar *pad_name;
-  GstPad *rtcp_src;
 
   ret = _find_transport_for_session (webrtc, session_id);
 
@@ -1556,11 +1555,7 @@ _get_or_create_rtp_transport_channel (GstWebRTCBin * webrtc, guint session_id)
     gst_bin_add (GST_BIN (webrtc), GST_ELEMENT (ret->send_bin));
     gst_bin_add (GST_BIN (webrtc), GST_ELEMENT (ret->receive_bin));
     g_array_append_val (webrtc->priv->transports, ret);
-  }
 
-  rtcp_src =
-      gst_element_get_static_pad (GST_ELEMENT (ret->receive_bin), "rtcp_src");
-  if (!gst_pad_is_linked (rtcp_src)) {
     pad_name = g_strdup_printf ("recv_rtcp_sink_%u", ret->session_id);
     if (!gst_element_link_pads (GST_ELEMENT (ret->receive_bin), "rtcp_src",
             GST_ELEMENT (webrtc->rtpbin), pad_name))
@@ -1572,8 +1567,6 @@ _get_or_create_rtp_transport_channel (GstWebRTCBin * webrtc, guint session_id)
             GST_ELEMENT (ret->send_bin), "rtcp_sink"))
       g_warn_if_reached ();
     g_free (pad_name);
-  } else {
-    gst_object_unref (rtcp_src);
   }
 
   gst_element_sync_state_with_parent (GST_ELEMENT (ret->send_bin));
@@ -3026,7 +3019,7 @@ _connect_input_stream (GstWebRTCBin * webrtc, GstWebRTCBinPad * pad)
 /* output pads are receiving elements */
 static void
 _connect_output_stream (GstWebRTCBin * webrtc,
-    GstWebRTCRTPTransceiver * rtp_trans, guint session_id)
+    TransportStream * stream, guint session_id)
 {
 /*
  * ,------------------------webrtcbin------------------------,
@@ -3041,40 +3034,16 @@ _connect_output_stream (GstWebRTCBin * webrtc,
  * '---------------------------------------------------------'
  */
   gchar *pad_name;
-  WebRTCTransceiver *trans;
-  GstPad *rtp_srcpad = NULL;
-
-  trans = WEBRTC_TRANSCEIVER (rtp_trans);
-
-  if (trans->stream) {
-    rtp_srcpad =
-        gst_element_get_static_pad (GST_ELEMENT (trans->stream->receive_bin),
-        "rtp_src");
-
-    if (gst_pad_is_linked (rtp_srcpad))
-      goto done;
-  }
 
   GST_INFO_OBJECT (webrtc, "linking output stream %u", session_id);
 
-  if (!trans->stream) {
-    TransportStream *item;
-
-    item = _get_or_create_transport_stream (webrtc, session_id, FALSE);
-    webrtc_transceiver_set_transport (trans, item);
-  }
-
   pad_name = g_strdup_printf ("recv_rtp_sink_%u", session_id);
-  if (!gst_element_link_pads (GST_ELEMENT (trans->stream->receive_bin),
+  if (!gst_element_link_pads (GST_ELEMENT (stream->receive_bin),
           "rtp_src", GST_ELEMENT (webrtc->rtpbin), pad_name))
     g_warn_if_reached ();
   g_free (pad_name);
 
-  gst_element_sync_state_with_parent (GST_ELEMENT (trans->stream->receive_bin));
-
-done:
-  if (rtp_srcpad)
-    gst_object_unref (rtp_srcpad);
+  gst_element_sync_state_with_parent (GST_ELEMENT (stream->receive_bin));
 }
 
 typedef struct
@@ -3121,7 +3090,7 @@ static void
 _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
     const GstSDPMessage * sdp, guint media_idx,
     TransportStream * stream, GstWebRTCRTPTransceiver * rtp_trans,
-    GStrv bundled, guint bundle_idx)
+    GStrv bundled, guint bundle_idx, gboolean * should_connect_bundle_stream)
 {
   WebRTCTransceiver *trans = WEBRTC_TRANSCEIVER (rtp_trans);
   GstWebRTCRTPTransceiverDirection prev_dir = rtp_trans->current_direction;
@@ -3301,8 +3270,20 @@ _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
             "creating new receive pad for transceiver %" GST_PTR_FORMAT, trans);
         pad = _create_pad_for_sdp_media (webrtc, GST_PAD_SRC, media_idx);
         pad->trans = gst_object_ref (rtp_trans);
-        _connect_output_stream (webrtc, rtp_trans,
-            bundled ? bundle_idx : media_idx);
+
+        if (!trans->stream) {
+          TransportStream *item;
+
+          item =
+              _get_or_create_transport_stream (webrtc,
+              bundled ? bundle_idx : media_idx, FALSE);
+          webrtc_transceiver_set_transport (trans, item);
+        }
+
+        if (!bundled)
+          _connect_output_stream (webrtc, trans->stream, media_idx);
+        else
+          *should_connect_bundle_stream = TRUE;
         /* delay adding the pad until rtpbin creates the recv output pad
          * to ghost to so queries/events travel through the pipeline correctly
          * as soon as the pad is added */
@@ -3496,12 +3477,13 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
   gboolean ret = FALSE;
   GStrv bundled = NULL;
   guint bundle_idx = 0;
+  gboolean should_connect_bundle_stream = FALSE;
+  TransportStream *bundle_stream = NULL;
 
   if (!_parse_bundle (webrtc, sdp->sdp, &bundled))
     goto done;
 
   if (bundled) {
-    TransportStream *bundle_stream;
 
     if (!_get_bundle_index (sdp->sdp, bundled, &bundle_idx)) {
       GST_ERROR_OBJECT (webrtc, "Bundle tag is %s but no media found matching",
@@ -3548,7 +3530,7 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
           g_strcmp0 (gst_sdp_media_get_media (media), "video") == 0) {
         if (trans) {
           _update_transceiver_from_sdp_media (webrtc, sdp->sdp, i, stream,
-              trans, bundled, bundle_idx);
+              trans, bundled, bundle_idx, &should_connect_bundle_stream);
         } else {
           trans = _find_transceiver (webrtc, NULL,
               (FindTransceiverFunc) _find_compatible_unassociated_transceiver);
@@ -3562,7 +3544,7 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
                     _get_direction_from_media (media), i));
           }
           _update_transceiver_from_sdp_media (webrtc, sdp->sdp, i, stream,
-              trans, bundled, bundle_idx);
+              trans, bundled, bundle_idx, &should_connect_bundle_stream);
         }
       } else if (_message_media_is_datachannel (sdp->sdp, i)) {
         _update_data_channel_from_sdp_media (webrtc, sdp->sdp, i, stream);
@@ -3570,6 +3552,11 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
         GST_ERROR_OBJECT (webrtc, "Unknown media type in SDP at index %u", i);
       }
     }
+  }
+
+  if (should_connect_bundle_stream) {
+    g_assert (bundle_stream);
+    _connect_output_stream (webrtc, bundle_stream, bundle_idx);
   }
 
   ret = TRUE;
