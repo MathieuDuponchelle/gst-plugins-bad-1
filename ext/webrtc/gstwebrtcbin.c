@@ -3197,7 +3197,6 @@ _update_transceiver_from_sdp_media (GstWebRTCBin * webrtc,
         }
 
         item.pt = pt;
-        item.media_idx = media_idx;
         gst_caps_unref (outcaps);
 
         g_array_append_val (stream->ptmap, item);
@@ -3841,12 +3840,36 @@ _set_description_task (GstWebRTCBin * webrtc, struct set_description *sd)
     gchar *ufrag, *pwd;
     TransportStream *item;
 
-    if (bundled && i != bundle_idx)
-      continue;
-
     item =
-        _get_or_create_transport_stream (webrtc, i,
-        _message_media_is_datachannel (sd->sdp->sdp, i));
+        _get_or_create_transport_stream (webrtc, bundled ? bundle_idx : i,
+        _message_media_is_datachannel (sd->sdp->sdp, bundled ? bundle_idx : i));
+
+    if (sd->source == SDP_REMOTE) {
+      const GstSDPMedia *media = gst_sdp_message_get_media (sd->sdp->sdp, i);
+      guint j;
+
+      for (j = 0; j < gst_sdp_media_attributes_len (media); j++) {
+        const GstSDPAttribute *attr = gst_sdp_media_get_attribute (media, j);
+
+        if (g_strcmp0 (attr->key, "ssrc") == 0) {
+          GStrv split = g_strsplit (attr->value, " ", 0);
+          guint32 ssrc;
+
+          if (split[0] && sscanf (split[0], "%u", &ssrc) && split[1]
+              && g_str_has_prefix (split[1], "cname:")) {
+            SsrcMapItem ssrc_item;
+
+            ssrc_item.media_idx = i;
+            ssrc_item.ssrc = ssrc;
+            g_array_append_val (item->remote_ssrcmap, ssrc_item);
+          }
+          g_strfreev (split);
+        }
+      }
+    }
+
+    if (bundled && bundle_idx != i)
+      continue;
 
     _get_ice_credentials_from_sdp_media (sd->sdp->sdp, i, &ufrag, &pwd);
 
@@ -4317,15 +4340,17 @@ on_rtpbin_pad_added (GstElement * rtpbin, GstPad * new_pad,
     if (!stream)
       g_warn_if_reached ();
 
-    for (i = 0; i < stream->ptmap->len; i++) {
-      PtMapItem *item = &g_array_index (stream->ptmap, PtMapItem, i);
-      if (item->pt == pt) {
+    media_idx = session_id;
+
+    for (i = 0; i < stream->remote_ssrcmap->len; i++) {
+      SsrcMapItem *item =
+          &g_array_index (stream->remote_ssrcmap, SsrcMapItem, i);
+      if (item->ssrc == ssrc) {
         media_idx = item->media_idx;
         break;
       }
     }
 
-    /* FIXME: bundle! */
     rtp_trans = _find_transceiver_for_mline (webrtc, media_idx);
     if (!rtp_trans)
       g_warn_if_reached ();
