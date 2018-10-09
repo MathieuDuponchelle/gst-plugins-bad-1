@@ -3513,8 +3513,6 @@ _update_transceivers_from_sdp (GstWebRTCBin * webrtc, SDPSource source,
         _message_media_is_datachannel (sdp->sdp, bundle_idx));
 
     g_array_set_size (bundle_stream->ptmap, 0);
-    transport_receive_bin_set_receive_state (bundle_stream->receive_bin,
-        RECEIVE_STATE_DROP);
 
     _connect_rtpfunnel (webrtc, bundle_idx);
   }
